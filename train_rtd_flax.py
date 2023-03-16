@@ -69,6 +69,9 @@ class TrainingArguments:
     weight_decay: float = field(
         default=0.0, metadata={"help": "Weight decay for AdamW if we apply some."}
     )
+    max_grad_norm: float = field(
+        default=1.0, metadata={"help": "Max gradient norm."}
+    )
     adam_beta1: float = field(
         default=0.9, metadata={"help": "Beta1 for AdamW optimizer"}
     )
@@ -187,6 +190,9 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "The name of the dataset to use (via the datasets library)."},
     )
+    mlm_probability: float = field(
+        default=0.15, metadata={"help": "Ratio of tokens to mask for masked language modeling loss"}
+    )
     compression_type: Optional[str] = field(
         default="GZIP",
         metadata={
@@ -300,7 +306,7 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    wandb.init(project="roberta", config=training_args.to_dict())
+    wandb.init(project="roberta", config=asdict(training_args))
 
     if model_args.generator_config_name:
         generator_config = RobertaConfig.from_pretrained(
@@ -336,8 +342,12 @@ def main():
         )
 
     data_collator = FlaxDataCollatorForMaskedLM(
-        tokenizer=tokenizer, mlm_probability=model_args.mlm_probability
+        tokenizer=tokenizer, mlm_probability=data_args.mlm_probability
     )
+
+    # Initialize our training
+    rng = jax.random.PRNGKey(training_args.seed)
+    dropout_rngs = jax.random.split(rng, jax.local_device_count())
 
     if model_args.generator_name_or_path:
         generator = FlaxRobertaForMaskedLM.from_pretrained(
@@ -366,10 +376,6 @@ def main():
             seed=training_args.seed,
             dtype=getattr(jnp, model_args.dtype),
         )
-
-    # Initialize our training
-    rng = jax.random.PRNGKey(training_args.seed)
-    dropout_rngs = jax.random.split(rng, jax.local_device_count())
 
     # Store some constant
     train_batch_size = int(training_args.train_batch_size)
@@ -579,9 +585,7 @@ def main():
     print("***** Running training *****")
     cur_step = 0
     minibatch_idx = 0
-    while cur_step < training_args.num_train_steps:
-        rng, dropout_rngs = jax.random.split(rng)
-
+    while cur_step < num_train_steps:
         for batch in dataset:
             batch = data_collator(batch.numpy())
             batch = shard(batch)
@@ -632,7 +636,7 @@ def main():
 
                     tokenizer.save_pretrained(outdir)
 
-            if cur_step >= training_args.max_steps:
+            if cur_step >= num_train_steps:
                 break
 
 
