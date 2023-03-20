@@ -305,6 +305,8 @@ def main():
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
+    rng = jax.random.PRNGKey(training_args.seed)
+    dropout_rngs = jax.random.split(rng, jax.local_device_count())
 
     wandb.init(project="roberta", config=asdict(training_args))
 
@@ -344,10 +346,6 @@ def main():
     data_collator = FlaxDataCollatorForMaskedLM(
         tokenizer=tokenizer, mlm_probability=data_args.mlm_probability
     )
-
-    # Initialize our training
-    rng = jax.random.PRNGKey(training_args.seed)
-    dropout_rngs = jax.random.split(rng, jax.local_device_count())
 
     if model_args.generator_name_or_path:
         generator = FlaxRobertaForMaskedLM.from_pretrained(
@@ -571,6 +569,7 @@ def main():
         )
 
         metrics = {
+            "loss": generator_loss + discriminator_loss,
             "generator_loss": generator_loss,
             "discriminator_loss": discriminator_loss,
         }
@@ -608,6 +607,9 @@ def main():
                 wandb.log(
                     {
                         "loss": float(train_metric["loss"]),
+                        "generator_loss": float(train_metric["generator_loss"]),
+                        "discriminator_loss": float(train_metric["discriminator_loss"]),
+                        "learning_rate": float(linear_decay_lr_schedule_fn(cur_step)),
                     },
                     step=cur_step,
                 )
